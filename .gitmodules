@@ -7,3 +7,6 @@
 [submodule "sort"]
 	path = sort
 	url = https://github.com/AngeloMono/sort.git
+[submodule "yolact"]
+	path = yolact
+	url = https://github.com/AngeloMono/yolact.git
