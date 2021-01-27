@@ -1,19 +1,25 @@
 from pathlib import Path
-
 import cv2
 import torch
 import torch.backends.cudnn as cudnn
-from numpy import random, vstack, append, empty, zeros, concatenate, uint8, setdiff1d
+import warnings
+
+from numpy import random, vstack, append, empty, zeros, concatenate, uint8, setdiff1d, arctan
+from math import sqrt, degrees, radians, cos, sin, tan
 
 from models.experimental import attempt_load
-from utils.datasets import LoadImages, LoadWebcam
-from utils.general import check_img_size, non_max_suppression, scale_coords
-from utils.plots import plot_one_box
-from utils.torch_utils import time_synchronized
+from yolo_utils.datasets import LoadImages, LoadWebcam
+from yolo_utils.general import check_img_size, non_max_suppression, scale_coords
+from yolo_utils.plots import plot_one_box
+from yolo_utils.torch_utils import time_synchronized
 
 from sort import Sort
 
-from math import sqrt, acos, asin, degrees
+from yolact import Yolact
+from yolact_utils.augmentations import FastBaseTransform
+from yolact_utils.functions import SavePath
+from data import cfg, set_cfg
+from layers.output_utils import postprocess
 
 
 def get_unmatched_reliable_tracks(np_matched_tracks, sort_object: Sort, time_update_conf: int):
@@ -39,6 +45,88 @@ def correct_the_tracks(tracks, img_x_shape: int, img_y_shape: int):
         t[3] = img_y_shape if t[3] > img_y_shape else t[3]
 
 
+def get_mask_bbox_and_score(yolact_net: Yolact, img, threshold=0.0, max_predictions=1):
+    with torch.no_grad():
+        frame = torch.from_numpy(img).cuda().float()
+        batch = FastBaseTransform()(frame.unsqueeze(0))
+        preds = yolact_net(batch)
+
+        h, w, _ = img.shape
+
+        save = cfg.rescore_bbox
+        cfg.rescore_bbox = True
+        t = postprocess(preds, w, h, visualize_lincomb=False, crop_masks=True)
+        cfg.rescore_bbox = save
+
+        idx = t[1].argsort(0, descending=True)[:max_predictions]
+        classes, scores, boxes, masks = [x[idx].cpu().numpy() for x in t[:]]
+
+        num_dets_to_consider = min(max_predictions, classes.shape[0])
+        # Remove dets below the threshold
+        for j in range(num_dets_to_consider):
+            if scores[j] < threshold:
+                num_dets_to_consider = j
+                break
+        masks_to_return = boxes_to_return = scores_to_return = None
+        if num_dets_to_consider > 0:
+            masks = masks[:num_dets_to_consider, :, :, None]
+            masks_to_return = []
+            boxes_to_return = []
+            scores_to_return = []
+            for m, b, s in zip(masks, boxes, scores):
+                masks_to_return.append(m)
+                boxes_to_return.append(b)
+                scores_to_return.append(s)
+            if len(masks_to_return) == 1:
+                masks_to_return = masks_to_return[0]
+            if len(boxes_to_return) == 1:
+                boxes_to_return = boxes_to_return[0]
+            if len(scores_to_return) == 1:
+                scores_to_return = scores_to_return[0]
+        return masks_to_return, boxes_to_return, scores_to_return
+
+
+def get_straight_line_from_2_points(p1, p2):
+    """
+    :param p1: point1
+    :param p2: point2
+    :return: m1, m2, and q of the given equation "(m1)x - [(m2)y] + q = 0" that passes through the given points
+    """
+    if p1[0] == p2[0] and p1[1] == p2[1]:
+        raise ValueError("Infinite rette")
+    elif p1[0] == p2[0]:
+        return -1, 0, p1[0]
+    m = float(p2[1] - p1[1]) / (p2[0] - p1[0])
+    q = p1[1] - (m * p1[0])
+    return m, 1, q
+
+
+def get_degrees_from_the_x_axis(vector_x, vector_y):
+    if vector_x == 0 and vector_y == 0:
+        return None
+    elif vector_x == 0:
+        return 90 if vector_y > 0 else 270
+    elif vector_y == 0:
+        return 0 if vector_x > 0 else 180
+    else:
+        deg = degrees(arctan(vector_y / vector_x))
+        if vector_x < 0 and vector_y < 0:
+            deg = 180 + deg
+        elif vector_x < 0 and vector_y > 0:
+            deg = 180 + deg
+        elif vector_x > 0 and vector_y < 0:
+            deg = 360 + deg
+    return deg
+
+
+def remove_unmatched_vals(vals: list, dict: dict):
+    dict_to_return = dict.copy()
+    for id_dict in dict:
+        if id_dict not in vals:
+            dict_to_return.pop(id_dict)
+    return dict_to_return
+
+
 # Source path video or 0 to camera
 source = r"C:\Users\angel\Desktop\Video Dimauro\Video cellula sola\Validation video\sola (6).AVI"
 
@@ -48,16 +136,23 @@ proportion_vid = 0.25 if debug else 0.5
 optical_flow_debug_tracks_id = [1]
 
 # Yolov5 variables
-weights_yolo = r"C:\Users\angel\Desktop\Video Dimauro\Dataset 1\Results\train yolov5s ep700 imgsize416 sd1\results\content\yolov5\runs\train\yolov5s_results\weights\best.pt"
-img_size_yolo = 416
-conf_thres_yolo = 0.45
-iou_thres_yolo = 0.3
+yolo_weights = r"C:\Users\angel\Desktop\Video Dimauro\Dataset Yolo\Results\train yolov5s ep700 imgsize416 sd1\results\content\yolov5\runs\train\yolov5s_results\weights\best.pt"
+yolo_img_size = 416
+yolo_conf_thres = 0.45
+yolo_iou_threshold = 0.3
 
 # SORT variables
 max_age_sort = 20  # Maximum number of frames to keep alive a track without associated detections
 min_hits_sort = 5  # Minimum number of associated detections before track is initialised
 max_num_frame_reliable_sort = 3  # Max confidence to keep valid a detection not matched
 iou_thres_sort = 0.00000000000000005
+
+# Yolact variables
+yolact_weight = r"C:\Users\angel\Desktop\Video Dimauro\Dataset Yolact\Results\content\yolact\weights\yolact_resnet50_cilia_133_5614_interrupt.pth"
+yolact_model_path = SavePath.from_str(yolact_weight)
+yolact_config = yolact_model_path.model_name + '_config'
+yolact_threshold = 0
+yolact_num_max_predictions = 1
 
 # Optical Flow variables
 lk_params = {'status': None,
@@ -78,36 +173,55 @@ previous_frame = None
 previous_tracks = empty((0, 5))
 currents_p0 = dict()
 previous_p0 = dict()
-movements = dict()
+angle_movements_axis_to_x_axis = dict()
+cilia_movements = dict()
+if debug:
+    currents_masks = dict()
+    currents_bbox_masks = dict()
+    movements_to_show = dict()
+
+# Ignore UserWarning created by yolact
+warnings.filterwarnings("ignore", category=UserWarning)
 
 with torch.no_grad():
     # Initalize
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')  # Torch device used
-    half = device.type != 'cpu'  # Half precision  only supported on CUDA
+    cuda = device.type != 'cpu'  # Half precision  only supported on CUDA
 
-    # Load model
-    model = attempt_load(weights_yolo, map_location=device)  # load FP32 model
-    imgsz = check_img_size(img_size_yolo, s=model.stride.max())  # Check img_size
-    if half:
-        model.half()  # To FP16 (only supported on CUDA)
+    # Load Yolo  and Yolact models
+    yolo_model = attempt_load(yolo_weights, map_location=device)  # load FP32 model
+    yolo_img_size = check_img_size(yolo_img_size, s=yolo_model.stride.max())  # Check img_size
+    set_cfg(yolact_config)
+    if cuda:
+        yolo_model.half()  # To FP16 (only supported on CUDA)
+        cudnn.fastest = True
+        torch.set_default_tensor_type('torch.cuda.FloatTensor')
+    yolact_model = Yolact()
+    yolact_model.load_weights(yolact_weight)
+    yolact_model.eval()
+    if cuda:
+        yolact_model = yolact_model.cuda()
+    yolact_model.detect.use_fast_nms = True
+    cfg.mask_proto_debug = False
 
     # Extract names and assign a color RGB to each name
-    names = model.module.names if hasattr(model, 'module') else model.names
+    names = yolo_model.module.names if hasattr(yolo_model, 'module') else yolo_model.names
     colors = [[random.randint(0, 255) for _ in range(3)] for _ in names]
 
     # Load video
     if str(source) == '0':
         cudnn.benchmark = True  # Set True to speed up constant image size inference
-        video = LoadWebcam(img_size=img_size_yolo, verbose=debug)
+        video = LoadWebcam(img_size=yolo_img_size, verbose=debug)
     else:
-        video = LoadImages(source, img_size=img_size_yolo, verbose=debug)
+        video = LoadImages(source, img_size=yolo_img_size, verbose=debug)
+    fps = round(video.cap.get(cv2.CAP_PROP_FPS))
 
     # Process each frame in video
-    for path, img, im0s, vid_cap in video:  # And print (tot_frame\current_frame) while call the __next__method
+    for path, img, im0s, vid_cap in video:  # And print (tot_frame\current_frame) while call the __next__ method
         video_frame_count = video.count if isinstance(video, LoadWebcam) else video.frame
 
         img = torch.from_numpy(img).to(device)
-        img = img.half() if half else img.float()  # uint8 to fp16/32
+        img = img.half() if cuda else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
 
         if img.ndimension() == 3:
@@ -115,10 +229,10 @@ with torch.no_grad():
 
         # Inference
         t1 = time_synchronized()
-        detections = model(img, augment=False)[0]
+        detections = yolo_model(img, augment=False)[0]
 
         # Apply NMS
-        detections = non_max_suppression(detections, conf_thres_yolo, iou_thres_yolo, classes=None, agnostic=False)
+        detections = non_max_suppression(detections, yolo_conf_thres, yolo_iou_threshold, classes=None, agnostic=False)
         detections = detections[0]
         t2 = time_synchronized()
 
@@ -151,7 +265,7 @@ with torch.no_grad():
         tracks_to_show = vstack([matched_tracks, unmatched_reliable_tracks]).astype(int)
         correct_the_tracks(tracks_to_show, im0s.shape[1], im0s.shape[0])
 
-        # Apply Optical Flow for each tracks_to_show
+        # Calculate the movement of the cilia
         for x1, y1, x2, y2, id_track in tracks_to_show:
             if id_track in previous_tracks[:, -1]:
                 previous_roi = previous_frame.copy()[y1:y2, x1:x2]
@@ -159,18 +273,35 @@ with torch.no_grad():
                 current_roi = im0s.copy()[y1:y2, x1:x2]
                 current_gray_roi = cv2.cvtColor(current_roi, cv2.COLOR_BGR2GRAY)
 
-                # Apply Optical Flow TODO apply a mask at goodFeaturesToTrack
+                # Create mask using Yolact
+                mask, bbox_mask, _ = get_mask_bbox_and_score(yolact_model, previous_roi, threshold=yolact_threshold,
+                                                             max_predictions=yolact_num_max_predictions)
+
+                # Apply Optical Flow
                 previous_p0[id_track] = cv2.goodFeaturesToTrack(previous_gray_roi, max_points_to_track,
-                                                                0.1, min_distance_points)
+                                                                0.1, min_distance_points, mask=mask.astype(uint8))
                 currents_p0[id_track], status, err = cv2.calcOpticalFlowPyrLK(previous_gray_roi, current_gray_roi,
                                                                               previous_p0[id_track].copy(), None,
                                                                               **lk_params)
+                # Define axis for movement if it doesn't already exist
+                if angle_movements_axis_to_x_axis.__contains__(id_track) is False:
+                    # Get (a)x - (b)y + (c) = 0 to calculate the perpendicular line where b = 0[line x=q] or 1[line y=mx+q]
+                    center_roi = (int((x2 - x1) / 2), int((y2 - y1) / 2))
+                    center_mask = ((int(bbox_mask[0] + bbox_mask[2] / 2)), int((bbox_mask[1] + bbox_mask[3]) / 2))
+                    ax, by, c = get_straight_line_from_2_points(center_roi, center_mask)
+                    if by == 0:  # The line passing through the points is parallel to the y axis; x = q
+                        # The perpendicular line is parallel to the x axis; y = q
+                        angle_movements_axis_to_x_axis[id_track] = 90
+                    elif ax == 0:
+                        angle_movements_axis_to_x_axis[id_track] = 0
+                    else:
+                        angle = get_degrees_from_the_x_axis(1, -1 / ax)
+                        angle_movements_axis_to_x_axis[id_track] = 360 - angle  # in [90,0] U ]270,360[
 
                 # Sum of  movements
                 mov = {'y': 0,
                        'x': 0,
-                       'angle_to_x': 0,
-                       'angle_to_y': 0,
+                       'degrees_to_x': 0,
                        'module': 0
                        }
                 for i, (start, end) in enumerate(zip(previous_p0[id_track], currents_p0[id_track])):
@@ -178,20 +309,22 @@ with torch.no_grad():
                     x_end, y_end = end.ravel()
                     mov['x'] = mov['x'] + (x_end - x_start)
                     mov['y'] = mov['y'] + (y_start - y_end)
-                # Save movement value in mov[id_track][frame]
-                mov['module'] = sqrt(mov['x']**2 + mov['y']**2)
-                mov['angle_to_x'] = degrees(acos(mov['x'] / mov['module']))
-                mov['angle_to_y'] = degrees(asin(mov['x'] / mov['module']))
-                if movements.__contains__(id_track) is False:
-                    movements[id_track] = {}
-                movements[id_track].update({video_frame_count: mov})
+                # Save movement value in cilia_movements[id_track][frame]
+                mov['module'] = sqrt(mov['x'] ** 2 + mov['y'] ** 2)
+                mov['degrees_to_x'] = get_degrees_from_the_x_axis(mov['x'], mov['y'])
 
-        # Write output on im0s_to_show
-        for x1, y1, x2, y2, id_track in tracks_to_show:
-            label = f'{names[0]} n. {int(id_track)}'
-            plot_one_box((x1, y1, x2, y2), im0s_to_show, label=label, color=colors[0], line_thickness=3)
+                if cilia_movements.__contains__(id_track) is False:
+                    cilia_movements[id_track] = {}
+                m = mov['module'] * cos(radians(abs(angle_movements_axis_to_x_axis[id_track] - mov['degrees_to_x'])))
+                cilia_movements[id_track].update({video_frame_count: m})
 
-        print(f'{s}Done. ({(t2 - t1):.3f}s) nt({len(tracks_to_show)})')
+                # Save mask, bbox and movement values to show in debug
+                if debug and id_track in optical_flow_debug_tracks_id:
+                    currents_masks[id_track] = mask
+                    currents_bbox_masks[id_track] = bbox_mask
+                    if movements_to_show.__contains__(id_track) is False:
+                        movements_to_show[id_track] = {}
+                    movements_to_show[id_track] = mov
 
         # Stream debug results
         if debug:
@@ -229,6 +362,38 @@ with torch.no_grad():
                 if id_track in optical_flow_debug_tracks_id:
                     if id_track in previous_tracks[:, -1]:
                         im0s_roi_copy = im0s.copy()[y1:y2, x1:x2]
+                        shape = im0s_roi_copy.shape
+                        center_roi = {
+                            'x': int(shape[1] / 2),
+                            'y': int(shape[0] / 2)
+                        }
+                        # Create mask_roi
+                        previous_roi = previous_frame.copy()[y1:y2, x1:x2]
+                        mask = currents_masks[id_track]
+                        bbox_mask = currents_bbox_masks[id_track]
+                        center_bbox_mask = {
+                            'x': int((bbox_mask[2] - bbox_mask[0]) / 2 + bbox_mask[0]),
+                            'y': int((bbox_mask[3] - bbox_mask[1]) / 2 + bbox_mask[1])
+                        }
+                        mask_roi = cv2.bitwise_and(previous_roi, previous_roi, mask=mask.astype(uint8))
+                        cv2.rectangle(mask_roi, (bbox_mask[0], bbox_mask[1]), (bbox_mask[2], bbox_mask[3]), (0, 255, 0),
+                                      thickness=2)
+                        cv2.circle(mask_roi, (center_roi['x'], center_roi['y']), 2, (0, 0, 255), 5)
+                        cv2.circle(mask_roi, (center_bbox_mask['x'], center_bbox_mask['y']), 2, (0, 0, 255), 5)
+                        cv2.line(mask_roi, (center_roi['x'], center_roi['y']),
+                                 (center_bbox_mask['x'], center_bbox_mask['y']), (0, 0, 255), thickness=2)
+                        half_arrow = 50
+                        if angle_movements_axis_to_x_axis[id_track] != 0:
+                            ax = tan(radians(angle_movements_axis_to_x_axis[id_track]))
+                            c_parallel = ax * (-center_roi['x']) + center_roi['y']
+                            start_arrow_axis = (center_roi['x'] - half_arrow,
+                                                int(ax * (center_roi['x'] + half_arrow) + c_parallel))
+                            end_arrow_axis = (center_roi['x'] + half_arrow,
+                                              int(ax * (center_roi['x'] - half_arrow) + c_parallel))
+                        else:
+                            start_arrow_axis = (center_roi['x'] - half_arrow, center_roi['y'])
+                            end_arrow_axis = (center_roi['x'] + half_arrow, center_roi['y'])
+                        cv2.arrowedLine(mask_roi, start_arrow_axis, end_arrow_axis, (255, 0, 0), thickness=2)
                         # Add movement point on im0s_roi_copy
                         for i, (start, end) in enumerate(zip(previous_p0[id_track], currents_p0[id_track])):
                             x_start, y_start = start.astype(int).ravel()
@@ -236,38 +401,66 @@ with torch.no_grad():
                             cv2.circle(im0s_roi_copy, (x_end, y_end), 1, (0, 0, 255), 5)
                             cv2.arrowedLine(im0s_roi_copy, (x_start, y_start), (x_end, y_end), (0, 255, 0), 2, 0)
                         # Create white_roi for movement results
-                        shape = im0s_roi_copy.shape
                         white_roi = zeros(shape, dtype=uint8)
                         white_roi.fill(255)
-                        center = {'x': int(shape[1]/2),
-                                  'y': int(shape[0]/2)}
-                        mov = movements[id_track][video_frame_count]
-                        cv2.circle(white_roi, (center['x'], center['y']), 1, (0, 0, 0), 3)
-                        cv2.arrowedLine(white_roi, (center['x'], center['y']),
-                                        (center['x'] + round(mov['x']), center['y'] - round(mov['y'])),
+                        mov = movements_to_show[id_track]
+                        cv2.circle(white_roi, (center_roi['x'], center_roi['y']), 1, (0, 0, 0), 3)
+                        cv2.arrowedLine(white_roi, (center_roi['x'], center_roi['y']),
+                                        (center_roi['x'] + round(mov['x']), center_roi['y'] - round(mov['y'])),
                                         (0, 255, 0), 2, 0)
+                        if angle_movements_axis_to_x_axis[id_track] != 0:
+                            rad = radians(angle_movements_axis_to_x_axis[id_track])
+                            m = tan(degrees(angle_movements_axis_to_x_axis[id_track]))
+                            end_arrow_mov = (round(center_roi['x'] +
+                                                   cilia_movements[id_track][video_frame_count] * abs(cos(rad))),
+                                             round(center_roi['y'] -
+                                                   cilia_movements[id_track][video_frame_count] * abs(sin(rad))))
+                        else:
+                            end_arrow_mov = (center_roi['x'] + round(cilia_movements[id_track][video_frame_count]),
+                                             center_roi['y'])
+                        cv2.arrowedLine(white_roi, (center_roi['x'], center_roi['y']),
+                                        end_arrow_mov, (255, 0, 0), 2, 0)
+                        cv2.line(white_roi, (center_roi['x'] + round(mov['x']), center_roi['y'] - round(mov['y'])),
+                                 end_arrow_mov, (0, 0, 0), 1, 0)
                         # Add text results to white_roi
-                        cv2.putText(white_roi, f"Module: {mov['module']}", (1, shape[0]-2),
+                        cv2.putText(white_roi, f"Module: {mov['module']}", (1, shape[0] - 2),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color=(0, 0, 0))
-                        cv2.putText(white_roi, f"Angle to X: {mov['angle_to_x']}", (1, shape[0] - 22),
+                        cv2.putText(white_roi, f"Degrees to X: {mov['degrees_to_x']}", (1, shape[0] - 22),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color=(0, 0, 0))
-                        cv2.putText(white_roi, f"Angle to Y: {mov['angle_to_y']}", (1, shape[0] - 42),
+                        cv2.putText(white_roi, f"Y: {mov['y']}", (1, shape[0] - 42),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color=(0, 0, 0))
-                        cv2.putText(white_roi, f"Y: {mov['y']}", (1, shape[0] - 62),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color=(0, 0, 0))
-                        cv2.putText(white_roi, f"X: {mov['x']}", (1, shape[0] - 82),
+                        cv2.putText(white_roi, f"X: {mov['x']}", (1, shape[0] - 62),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color=(0, 0, 0))
                         # Concatenate im0s_roi_copy and white_roi to stream the results
-                        im0s_movement = concatenate((im0s_roi_copy, white_roi), axis=1)
+                        im0s_movement = concatenate((mask_roi, im0s_roi_copy, white_roi), axis=1)
+                        im0s_movement = cv2.resize(im0s_movement, (0, 0), fx=proportion_vid * 2, fy=proportion_vid * 2)
                         cv2.imshow(f'Movement track n. {id_track}', im0s_movement)
             # Destroy dead windows 'Movement track n. {id_track}'
             for id_track in setdiff1d(previous_tracks[:, -1], tracks_to_show[:, -1]):
-                cv2.destroyWindow(f'Movement track n. {id_track}')
+                if id_track in optical_flow_debug_tracks_id:
+                    cv2.destroyWindow(f'Movement track n. {id_track}')
+
+        # Clean cilia_movements and angle_movements_axis_to_x_axis every 2 sec
+        if video_frame_count % (fps * 2) == 0:
+            sort_trackers_id_alive = []
+            for track in mot_tracker.trackers:
+                sort_trackers_id_alive.append(track.id + 1)
+            cilia_movements = remove_unmatched_vals(sort_trackers_id_alive, cilia_movements)
+            angle_movements_axis_to_x_axis = remove_unmatched_vals(sort_trackers_id_alive,
+                                                                   angle_movements_axis_to_x_axis)
+
+        # TODO calcolare frequenza media
 
         # Update previous_frame, previous_p0 and previous_tracks
         previous_frame = im0s.copy()
         previous_p0 = currents_p0.copy()
         previous_tracks = tracks_to_show.copy()
+
+        # Write output on im0s_to_show
+        for x1, y1, x2, y2, id_track in tracks_to_show:
+            label = f'{names[0]} n. {int(id_track)}'
+            plot_one_box((x1, y1, x2, y2), im0s_to_show, label=label, color=colors[0], line_thickness=3)
+        print(f'{s}Done. ({(t2 - t1):.3f}s) nt({len(tracks_to_show)})')
 
         # Stream out-put results img
         im0s_to_show = cv2.resize(im0s_to_show, (0, 0), fx=proportion_vid, fy=proportion_vid)
