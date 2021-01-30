@@ -1,10 +1,14 @@
 from pathlib import Path
+import os
+import shutil
+
 import cv2
 import torch
 import torch.backends.cudnn as cudnn
-import warnings
+import matplotlib.pyplot as plt
+from warnings import filterwarnings
 
-from numpy import random, vstack, append, empty, zeros, concatenate, uint8, setdiff1d, arctan
+from numpy import random, vstack, append, empty, zeros, concatenate, uint8, setdiff1d, arctan, ndarray
 from math import sqrt, degrees, radians, cos, sin, tan
 
 from models.experimental import attempt_load
@@ -127,11 +131,72 @@ def remove_unmatched_vals(vals: list, dict: dict):
     return dict_to_return
 
 
-# Source path video or 0 to camera
-source = r"C:\Users\angel\Desktop\Video Dimauro\Video cellula sola\Validation video\sola (6).AVI"
+def get_avg_frames_period(mov_dict: dict, previous_avg, n_frame_to_consider: int, actual_frame: int,
+                          frame_step: int = 1):
+    start_frame = actual_frame - n_frame_to_consider
+    count = 0
+    # Assign start frame and count = 0
+    if start_frame != 0:
+        while mov_dict.__contains__(start_frame - count) and (
+                mov_dict[start_frame] * mov_dict[start_frame - count]) > 0:
+            count = count + frame_step
+        start_frame = start_frame - count + frame_step
+    else:
+        while mov_dict.__contains__(start_frame) is False:
+            start_frame = start_frame + frame_step
+        while mov_dict.__contains__(start_frame + count) and (
+                mov_dict[start_frame] * mov_dict[start_frame + count]) > 0:
+            count = count + frame_step
+        start_frame = start_frame + count
+    count = 0
 
-debug = True
+    # Calculate the distinct periods
+    list_calculated_period = list()
+    is_in_other_half_of_start = False
+    while start_frame + count <= actual_frame:
+        if mov_dict.__contains__(start_frame + count):
+            if is_in_other_half_of_start:
+                if mov_dict[start_frame] * mov_dict[start_frame + count] > 0:
+                    # Check reliability
+                    if mov_dict.__contains__(start_frame + count + frame_step) and mov_dict[
+                        start_frame + count + frame_step] * mov_dict[start_frame] > 0:
+                        list_calculated_period.append(count)
+                    start_frame = start_frame + count
+                    count = 0
+                    is_in_other_half_of_start = False
+                else:
+                    count = count + frame_step
+            else:
+                if mov_dict[start_frame] * mov_dict[start_frame + count] < 0:
+                    is_in_other_half_of_start = True
+                count = count + frame_step
+        else:
+            start_frame = start_frame + count + frame_step
+            count = 0
+            is_in_other_half_of_start = False
+
+    # Get the avg of calculated periods
+    if len(list_calculated_period) != 0:
+        avg_to_return = sum(list_calculated_period) / len(list_calculated_period)
+        if previous_avg != 0 and previous_avg is not None:
+            avg_to_return = (avg_to_return + previous_avg) / 2
+    elif previous_avg != 0 and previous_avg is not None:
+        avg_to_return = previous_avg
+    else:
+        avg_to_return = 0
+    return avg_to_return
+
+
+def get_bpm_from_frames_period(frames_period, fps_video):
+    return round(60 * fps_video / frames_period, 2)
+
+
+# Source path video or 0 to camera
+source = r"C:\Users\angel\Desktop\Video Dimauro\Video cellula sola\Train-test video\sola (1).mp4"
+
+debug = False
 wait_key = 0 if debug else 1
+save_output = True
 proportion_vid = 0.25 if debug else 0.5
 optical_flow_debug_tracks_id = [1]
 
@@ -175,13 +240,18 @@ currents_p0 = dict()
 previous_p0 = dict()
 angle_movements_axis_to_x_axis = dict()
 cilia_movements = dict()
+avg_frames_period = dict()
+bpm = dict()
 if debug:
     currents_masks = dict()
     currents_bbox_masks = dict()
     movements_to_show = dict()
+if save_output:
+    img_video_output = []
+    video_output_size = None
 
 # Ignore UserWarning created by yolact
-warnings.filterwarnings("ignore", category=UserWarning)
+filterwarnings("ignore", category=UserWarning)
 
 with torch.no_grad():
     # Initalize
@@ -229,23 +299,24 @@ with torch.no_grad():
 
         # Inference
         t1 = time_synchronized()
-        detections = yolo_model(img, augment=False)[0]
+        yolo_detections = yolo_model(img, augment=False)[0]
 
         # Apply NMS
-        detections = non_max_suppression(detections, yolo_conf_thres, yolo_iou_threshold, classes=None, agnostic=False)
-        detections = detections[0]
+        yolo_detections = non_max_suppression(yolo_detections, yolo_conf_thres, yolo_iou_threshold, classes=None,
+                                              agnostic=False)
+        yolo_detections = yolo_detections[0]
         t2 = time_synchronized()
 
         # Processing detections predicted
         p, s, im0s_to_show = Path(path), '', im0s.copy()
         s += '%gx%g ' % img.shape[2:]  # Print string
 
-        if len(detections):
+        if len(yolo_detections):
             # Rescale boxes from img_size to im0 size
-            detections[:, :4] = scale_coords(img.shape[2:], detections[:, :4], im0s_to_show.shape).round()
+            yolo_detections[:, :4] = scale_coords(img.shape[2:], yolo_detections[:, :4], im0s_to_show.shape).round()
 
             # SORT tracker application
-            np_det = detections.cpu().numpy()
+            np_det = yolo_detections.cpu().numpy()
             matched_tracks = mot_tracker.update(np_det[:, 0:-1])
 
             # Get unmatched reliable tracks
@@ -253,8 +324,8 @@ with torch.no_grad():
                                                                       max_num_frame_reliable_sort)
 
             # Print results
-            for c in detections[:, -1].unique():
-                n = (detections[:, -1] == c).sum()  # Detections for class
+            for c in yolo_detections[:, -1].unique():
+                n = (yolo_detections[:, -1] == c).sum()  # Detections for class
                 s += '%g %ss, ' % (n, names[int(c)])  # Add number and name of detection to string
         else:
             matched_tracks = mot_tracker.update()
@@ -278,13 +349,15 @@ with torch.no_grad():
                                                              max_predictions=yolact_num_max_predictions)
 
                 # Apply Optical Flow
+                mask = mask.astype(uint8) if isinstance(mask, ndarray) else None
                 previous_p0[id_track] = cv2.goodFeaturesToTrack(previous_gray_roi, max_points_to_track,
-                                                                0.1, min_distance_points, mask=mask.astype(uint8))
-                currents_p0[id_track], status, err = cv2.calcOpticalFlowPyrLK(previous_gray_roi, current_gray_roi,
-                                                                              previous_p0[id_track].copy(), None,
-                                                                              **lk_params)
+                                                                0.1, min_distance_points, mask=mask)
+                if previous_p0.__contains__(id_track) and previous_p0[id_track] is not None:
+                    currents_p0[id_track], status, err = cv2.calcOpticalFlowPyrLK(previous_gray_roi, current_gray_roi,
+                                                                                  previous_p0[id_track].copy(), None,
+                                                                                  **lk_params)
                 # Define axis for movement if it doesn't already exist
-                if angle_movements_axis_to_x_axis.__contains__(id_track) is False:
+                if angle_movements_axis_to_x_axis.__contains__(id_track) is False and bbox_mask is not None:
                     # Get (a)x - (b)y + (c) = 0 to calculate the perpendicular line where b = 0[line x=q] or 1[line y=mx+q]
                     center_roi = (int((x2 - x1) / 2), int((y2 - y1) / 2))
                     center_mask = ((int(bbox_mask[0] + bbox_mask[2] / 2)), int((bbox_mask[1] + bbox_mask[3]) / 2))
@@ -296,7 +369,8 @@ with torch.no_grad():
                         angle_movements_axis_to_x_axis[id_track] = 0
                     else:
                         angle = get_degrees_from_the_x_axis(1, -1 / ax)
-                        angle_movements_axis_to_x_axis[id_track] = 360 - angle  # in [90,0] U ]270,360[
+                        if angle is not None:
+                            angle_movements_axis_to_x_axis[id_track] = 360 - angle  # in [90,0] U ]270,360[
 
                 # Sum of  movements
                 mov = {'y': 0,
@@ -309,14 +383,16 @@ with torch.no_grad():
                     x_end, y_end = end.ravel()
                     mov['x'] = mov['x'] + (x_end - x_start)
                     mov['y'] = mov['y'] + (y_start - y_end)
-                # Save movement value in cilia_movements[id_track][frame]
                 mov['module'] = sqrt(mov['x'] ** 2 + mov['y'] ** 2)
                 mov['degrees_to_x'] = get_degrees_from_the_x_axis(mov['x'], mov['y'])
 
-                if cilia_movements.__contains__(id_track) is False:
-                    cilia_movements[id_track] = {}
-                m = mov['module'] * cos(radians(abs(angle_movements_axis_to_x_axis[id_track] - mov['degrees_to_x'])))
-                cilia_movements[id_track].update({video_frame_count: m})
+                # Save movement value in cilia_movements[id_track][frame]
+                if mov['degrees_to_x'] is not None and angle_movements_axis_to_x_axis.__contains__(id_track):
+                    if cilia_movements.__contains__(id_track) is False:
+                        cilia_movements[id_track] = {}
+                    m = mov['module'] * cos(
+                        radians(abs(angle_movements_axis_to_x_axis[id_track] - mov['degrees_to_x'])))
+                    cilia_movements[id_track].update({video_frame_count: m})
 
                 # Save mask, bbox and movement values to show in debug
                 if debug and id_track in optical_flow_debug_tracks_id:
@@ -330,7 +406,7 @@ with torch.no_grad():
         if debug:
             # Stream yolo detections on im0_yolo
             im0s_yolo = im0s.copy()
-            for *xyxy, conf, cls in detections:
+            for *xyxy, conf, cls in yolo_detections:
                 label = '%s %.2f' % (names[int(cls)], conf)
                 plot_one_box(xyxy, im0s_yolo, label=label, color=colors[int(cls)], line_thickness=3)
             im0s_yolo = cv2.resize(im0s_yolo, (0, 0), fx=proportion_vid, fy=proportion_vid)
@@ -435,21 +511,33 @@ with torch.no_grad():
                         im0s_movement = concatenate((mask_roi, im0s_roi_copy, white_roi), axis=1)
                         im0s_movement = cv2.resize(im0s_movement, (0, 0), fx=proportion_vid * 2, fy=proportion_vid * 2)
                         cv2.imshow(f'Movement track n. {id_track}', im0s_movement)
+
             # Destroy dead windows 'Movement track n. {id_track}'
             for id_track in setdiff1d(previous_tracks[:, -1], tracks_to_show[:, -1]):
                 if id_track in optical_flow_debug_tracks_id:
                     cv2.destroyWindow(f'Movement track n. {id_track}')
 
-        # Clean cilia_movements and angle_movements_axis_to_x_axis every 2 sec
+        # Clean cilia_movements, angle_movements_axis_to_x_axis, avg_frames_period, and bpm every 2 sec
         if video_frame_count % (fps * 2) == 0:
             sort_trackers_id_alive = []
             for track in mot_tracker.trackers:
                 sort_trackers_id_alive.append(track.id + 1)
-            cilia_movements = remove_unmatched_vals(sort_trackers_id_alive, cilia_movements)
             angle_movements_axis_to_x_axis = remove_unmatched_vals(sort_trackers_id_alive,
                                                                    angle_movements_axis_to_x_axis)
+            avg_frames_period = remove_unmatched_vals(sort_trackers_id_alive, avg_frames_period)
+            if save_output is False:
+                cilia_movements = remove_unmatched_vals(sort_trackers_id_alive, cilia_movements)
+                bpm = remove_unmatched_vals(sort_trackers_id_alive, bpm)
 
-        # TODO calcolare frequenza media
+        # Calculate avg cilia frequency
+        if video_frame_count % fps == 0:
+            for id_track in cilia_movements:
+                actual_avg_frames_period = avg_frames_period[id_track] if avg_frames_period.__contains__(
+                    id_track) else 0
+                avg_frames_period[id_track] = get_avg_frames_period(cilia_movements[id_track],
+                                                                    actual_avg_frames_period, fps, video_frame_count)
+                if avg_frames_period[id_track] != 0:
+                    bpm[id_track] = get_bpm_from_frames_period(avg_frames_period[id_track], fps)
 
         # Update previous_frame, previous_p0 and previous_tracks
         previous_frame = im0s.copy()
@@ -458,12 +546,61 @@ with torch.no_grad():
 
         # Write output on im0s_to_show
         for x1, y1, x2, y2, id_track in tracks_to_show:
-            label = f'{names[0]} n. {int(id_track)}'
+            label = f'{names[0]} {int(id_track)}'
+            if bpm.__contains__(id_track):
+                label = label + f' - {bpm[id_track]} bpm'
             plot_one_box((x1, y1, x2, y2), im0s_to_show, label=label, color=colors[0], line_thickness=3)
         print(f'{s}Done. ({(t2 - t1):.3f}s) nt({len(tracks_to_show)})')
+
+        # Append frame to save in img_video_output
+        if save_output:
+            img_video_output.append(im0s_to_show)
+            if video_output_size is None:
+                height, width, _ = im0s_to_show.shape
+                video_output_size = (width, height)
 
         # Stream out-put results img
         im0s_to_show = cv2.resize(im0s_to_show, (0, 0), fx=proportion_vid, fy=proportion_vid)
         cv2.imshow(str(p), im0s_to_show)
         if cv2.waitKey(wait_key) & 0xFF == 27:  # Press esc to exit
             raise StopIteration
+
+    # Save output results
+    if save_output and len(img_video_output) != 0:
+        # Make dir in Results
+        ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+        file_name = os.path.basename(path)
+        results_path = os.path.join(ROOT_DIR, 'results', os.path.splitext(file_name)[0])
+        if os.path.exists(results_path):
+            shutil.rmtree(results_path)
+            # os.rmdir(results_path)
+        os.mkdir(results_path)
+
+        # Save plt movements
+        try:
+            for id_track in cilia_movements:
+                frames = cilia_movements[id_track].keys()
+                m = cilia_movements[id_track].values()
+                plt.plot(frames, m)
+                plt.axes().spines['bottom'].set_position(('data', 0))
+                subtitle = f'Movement cellula n. {id_track}'
+                if bpm.__contains__(id_track):
+                    subtitle = subtitle + f' - {bpm[id_track]} bpm'
+                plt.suptitle(subtitle)
+                plt_path = os.path.join(results_path, f'Movement cellula n. {id_track}.png')
+                plt.savefig(plt_path)
+            print('\nGrafici salvati con successo.')
+        except:
+            print('Impossibile salvare i grafici elaborati.')
+
+        # Save video
+        try:
+            video_path = os.path.dirname(path)
+            video_path = os.path.join(results_path, 'output_' + file_name)
+            out_video = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, video_output_size)
+            for i in range(len(img_video_output)):
+                out_video.write(img_video_output[i])
+            out_video.release()
+            print('Video salvato con successo.')
+        except:
+            print('Impossibile salvare il video elaborato.')
