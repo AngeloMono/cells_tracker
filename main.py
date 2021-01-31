@@ -1,4 +1,3 @@
-from pathlib import Path
 import os
 import shutil
 
@@ -8,14 +7,14 @@ import torch.backends.cudnn as cudnn
 import matplotlib.pyplot as plt
 from warnings import filterwarnings
 
-from numpy import random, vstack, append, empty, zeros, concatenate, uint8, setdiff1d, arctan, ndarray
+from numpy import vstack, append, empty, zeros, concatenate, uint8, setdiff1d, arctan, ndarray
 from math import sqrt, degrees, radians, cos, sin, tan
+from datetime import datetime
 
 from models.experimental import attempt_load
 from yolo_utils.datasets import LoadImages, LoadWebcam
 from yolo_utils.general import check_img_size, non_max_suppression, scale_coords
 from yolo_utils.plots import plot_one_box
-from yolo_utils.torch_utils import time_synchronized
 
 from sort import Sort
 
@@ -194,9 +193,14 @@ def get_bpm_from_frames_period(frames_period, fps_video):
 # Source path video or 0 to camera
 source = r"C:\Users\angel\Desktop\Video Dimauro\Video cellula sola\Train-test video\sola (1).mp4"
 
-debug = False
+debug = True
 wait_key = 0 if debug else 1
 save_output = True
+save_video = True
+save_plt = True
+if save_output:
+    save_video = True
+    save_plt = True
 proportion_vid = 0.25 if debug else 0.5
 optical_flow_debug_tracks_id = [1]
 
@@ -246,7 +250,7 @@ if debug:
     currents_masks = dict()
     currents_bbox_masks = dict()
     movements_to_show = dict()
-if save_output:
+if save_output or save_video:
     img_video_output = []
     video_output_size = None
 
@@ -274,20 +278,29 @@ with torch.no_grad():
     yolact_model.detect.use_fast_nms = True
     cfg.mask_proto_debug = False
 
-    # Extract names and assign a color RGB to each name
+    # Extract names and assign a color RGB for the bbox
     names = yolo_model.module.names if hasattr(yolo_model, 'module') else yolo_model.names
-    colors = [[random.randint(0, 255) for _ in range(3)] for _ in names]
+    color = (172, 47, 117)
 
     # Load video
     if str(source) == '0':
         cudnn.benchmark = True  # Set True to speed up constant image size inference
-        video = LoadWebcam(img_size=yolo_img_size, verbose=debug)
+        video = LoadWebcam(img_size=yolo_img_size, verbose=False)
     else:
-        video = LoadImages(source, img_size=yolo_img_size, verbose=debug)
+        video = LoadImages(source, img_size=yolo_img_size, verbose=False)
     fps = round(video.cap.get(cv2.CAP_PROP_FPS))
+    print('Stream processed frames')
+    print("Press 'esc' to quit")
+    if debug:
+        print('\nDEBUG MODE ACTIVATE:')
+        print("Press 'space bar' to play or stop the video")
+        print('Press any other key to go to the next frame')
+    print()
 
     # Process each frame in video
     for path, img, im0s, vid_cap in video:  # And print (tot_frame\current_frame) while call the __next__ method
+        start_time = datetime.now()
+        t_yolact = None
         video_frame_count = video.count if isinstance(video, LoadWebcam) else video.frame
 
         img = torch.from_numpy(img).to(device)
@@ -298,18 +311,20 @@ with torch.no_grad():
             img = img.unsqueeze(0)
 
         # Inference
-        t1 = time_synchronized()
+        if debug:
+            t1 = datetime.now()
         yolo_detections = yolo_model(img, augment=False)[0]
 
         # Apply NMS
         yolo_detections = non_max_suppression(yolo_detections, yolo_conf_thres, yolo_iou_threshold, classes=None,
                                               agnostic=False)
         yolo_detections = yolo_detections[0]
-        t2 = time_synchronized()
+        if debug:
+            t2 = datetime.now()
+            t_yolo = (t2 - t1).total_seconds()
 
         # Processing detections predicted
-        p, s, im0s_to_show = Path(path), '', im0s.copy()
-        s += '%gx%g ' % img.shape[2:]  # Print string
+        im0s_to_show = im0s.copy()
 
         if len(yolo_detections):
             # Rescale boxes from img_size to im0 size
@@ -323,10 +338,6 @@ with torch.no_grad():
             unmatched_reliable_tracks = get_unmatched_reliable_tracks(matched_tracks, mot_tracker,
                                                                       max_num_frame_reliable_sort)
 
-            # Print results
-            for c in yolo_detections[:, -1].unique():
-                n = (yolo_detections[:, -1] == c).sum()  # Detections for class
-                s += '%g %ss, ' % (n, names[int(c)])  # Add number and name of detection to string
         else:
             matched_tracks = mot_tracker.update()
             unmatched_reliable_tracks = get_unmatched_reliable_tracks(matched_tracks, mot_tracker,
@@ -344,9 +355,14 @@ with torch.no_grad():
                 current_roi = im0s.copy()[y1:y2, x1:x2]
                 current_gray_roi = cv2.cvtColor(current_roi, cv2.COLOR_BGR2GRAY)
 
+                if debug:
+                    t1 = datetime.now()
                 # Create mask using Yolact
                 mask, bbox_mask, _ = get_mask_bbox_and_score(yolact_model, previous_roi, threshold=yolact_threshold,
                                                              max_predictions=yolact_num_max_predictions)
+                if debug:
+                    t2 = datetime.now()
+                    t_yolact = (t2 - t1).total_seconds()
 
                 # Apply Optical Flow
                 mask = mask.astype(uint8) if isinstance(mask, ndarray) else None
@@ -404,11 +420,13 @@ with torch.no_grad():
 
         # Stream debug results
         if debug:
+            finish_time = datetime.now()
+            total_time = (finish_time - start_time).total_seconds()
             # Stream yolo detections on im0_yolo
             im0s_yolo = im0s.copy()
             for *xyxy, conf, cls in yolo_detections:
                 label = '%s %.2f' % (names[int(cls)], conf)
-                plot_one_box(xyxy, im0s_yolo, label=label, color=colors[int(cls)], line_thickness=3)
+                plot_one_box(xyxy, im0s_yolo, label=label, color=color, line_thickness=3)
             im0s_yolo = cv2.resize(im0s_yolo, (0, 0), fx=proportion_vid, fy=proportion_vid)
             cv2.imshow('Yolo detection', im0s_yolo)
 
@@ -417,7 +435,7 @@ with torch.no_grad():
             for t in mot_tracker.trackers:
                 state = t.get_state()[0]
                 id_track = t.id
-                plot_one_box(state, im0s_all_tracks, label=str(id_track + 1), color=colors[int(cls)], line_thickness=3)
+                plot_one_box(state, im0s_all_tracks, label=str(id_track + 1), color=color, line_thickness=3)
             im0s_all_tracks = cv2.resize(im0s_all_tracks, (0, 0), fx=proportion_vid, fy=proportion_vid)
             cv2.imshow('All tracks', im0s_all_tracks)
 
@@ -425,7 +443,7 @@ with torch.no_grad():
             im0s_matched_and_reliable_tracks = im0s.copy()
             for x1, y1, x2, y2, id_track in matched_tracks:
                 plot_one_box((x1, y1, x2, y2), im0s_matched_and_reliable_tracks, label=f'Matched:{int(id_track)}',
-                             color=colors[0], line_thickness=3)
+                             color=color, line_thickness=3)
             for x1, y1, x2, y2, id_track in unmatched_reliable_tracks:
                 plot_one_box((x1, y1, x2, y2), im0s_matched_and_reliable_tracks, label=f'Reliable:{int(id_track)}',
                              color=(0, 0, 0), line_thickness=3)
@@ -517,6 +535,17 @@ with torch.no_grad():
                 if id_track in optical_flow_debug_tracks_id:
                     cv2.destroyWindow(f'Movement track n. {id_track}')
 
+            # Print time elaboration
+            if isinstance(video, LoadImages):
+                s = f'Frame({video.frame}/{video.nframes}):'
+            else:
+                s = f'Frame {video.count}:'
+            s = s + f' time elaboration:{total_time.__format__(".4f")} s (yolo time:{t_yolo.__format__(".4f")} s'
+            if t_yolact is not None:
+                s = s + f', yolact time:{t_yolact.__format__(".4f")} s'
+            s = s + ')'
+            print(s)
+
         # Clean cilia_movements, angle_movements_axis_to_x_axis, avg_frames_period, and bpm every 2 sec
         if video_frame_count % (fps * 2) == 0:
             sort_trackers_id_alive = []
@@ -525,7 +554,7 @@ with torch.no_grad():
             angle_movements_axis_to_x_axis = remove_unmatched_vals(sort_trackers_id_alive,
                                                                    angle_movements_axis_to_x_axis)
             avg_frames_period = remove_unmatched_vals(sort_trackers_id_alive, avg_frames_period)
-            if save_output is False:
+            if save_output is False and save_plt is False:
                 cilia_movements = remove_unmatched_vals(sort_trackers_id_alive, cilia_movements)
                 bpm = remove_unmatched_vals(sort_trackers_id_alive, bpm)
 
@@ -549,11 +578,10 @@ with torch.no_grad():
             label = f'{names[0]} {int(id_track)}'
             if bpm.__contains__(id_track):
                 label = label + f' - {bpm[id_track]} bpm'
-            plot_one_box((x1, y1, x2, y2), im0s_to_show, label=label, color=colors[0], line_thickness=3)
-        print(f'{s}Done. ({(t2 - t1):.3f}s) nt({len(tracks_to_show)})')
+            plot_one_box((x1, y1, x2, y2), im0s_to_show, label=label, color=color, line_thickness=3)
 
         # Append frame to save in img_video_output
-        if save_output:
+        if save_output or save_video:
             img_video_output.append(im0s_to_show)
             if video_output_size is None:
                 height, width, _ = im0s_to_show.shape
@@ -561,46 +589,50 @@ with torch.no_grad():
 
         # Stream out-put results img
         im0s_to_show = cv2.resize(im0s_to_show, (0, 0), fx=proportion_vid, fy=proportion_vid)
-        cv2.imshow(str(p), im0s_to_show)
-        if cv2.waitKey(wait_key) & 0xFF == 27:  # Press esc to exit
+        cv2.imshow(fr'{path}', im0s_to_show)
+        wk_return = cv2.waitKey(wait_key)
+        if wk_return & 0xFF == 27:  # Press esc to exit
             raise StopIteration
+        elif debug and wk_return & 0xFF == 32:  # Press space in debug mode to stop or play video
+            wait_key = 1 if wait_key == 0 else 0
 
     # Save output results
-    if save_output and len(img_video_output) != 0:
+    if save_output or save_video or save_plt:
         # Make dir in Results
         ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
         file_name = os.path.basename(path)
         results_path = os.path.join(ROOT_DIR, 'results', os.path.splitext(file_name)[0])
         if os.path.exists(results_path):
             shutil.rmtree(results_path)
-            # os.rmdir(results_path)
         os.mkdir(results_path)
 
         # Save plt movements
-        try:
-            for id_track in cilia_movements:
-                frames = cilia_movements[id_track].keys()
-                m = cilia_movements[id_track].values()
-                plt.plot(frames, m)
-                plt.axes().spines['bottom'].set_position(('data', 0))
-                subtitle = f'Movement cellula n. {id_track}'
-                if bpm.__contains__(id_track):
-                    subtitle = subtitle + f' - {bpm[id_track]} bpm'
-                plt.suptitle(subtitle)
-                plt_path = os.path.join(results_path, f'Movement cellula n. {id_track}.png')
-                plt.savefig(plt_path)
-            print('\nGrafici salvati con successo.')
-        except:
-            print('Impossibile salvare i grafici elaborati.')
+        if save_output or save_plt:
+            try:
+                for id_track in cilia_movements:
+                    frames = cilia_movements[id_track].keys()
+                    m = cilia_movements[id_track].values()
+                    plt.plot(frames, m)
+                    plt.axes().spines['bottom'].set_position(('data', 0))
+                    subtitle = f'Movement cellula n. {id_track}'
+                    if bpm.__contains__(id_track):
+                        subtitle = subtitle + f' - {bpm[id_track]} bpm'
+                    plt.suptitle(subtitle)
+                    plt_path = os.path.join(results_path, f'Movement cellula n. {id_track}.png')
+                    plt.savefig(plt_path)
+                print('\nGraphs saved successfully.')
+            except:
+                print('Unable to save processed graphs.')
 
         # Save video
-        try:
-            video_path = os.path.dirname(path)
-            video_path = os.path.join(results_path, 'output_' + file_name)
-            out_video = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, video_output_size)
-            for i in range(len(img_video_output)):
-                out_video.write(img_video_output[i])
-            out_video.release()
-            print('Video salvato con successo.')
-        except:
-            print('Impossibile salvare il video elaborato.')
+        if (save_output or save_video) and len(img_video_output) != 0:
+            try:
+                video_path = os.path.dirname(path)
+                video_path = os.path.join(results_path, 'output_' + file_name)
+                out_video = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, video_output_size)
+                for i in range(len(img_video_output)):
+                    out_video.write(img_video_output[i])
+                out_video.release()
+                print('Video saved successfully.')
+            except:
+                print('Unable to save processed video.')
