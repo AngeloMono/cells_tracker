@@ -18,8 +18,12 @@ from yolo_utils.plots import plot_one_box
 from sort import Sort
 
 from yolact import Yolact
-from yolact_utils.functions import SavePath
 from data import cfg, set_cfg
+
+from configs.yolo_config import yolo_weights, yolo_img_size, yolo_conf_thres, yolo_iou_threshold
+from configs.sort_config import max_age_sort, min_hits_sort, max_num_frame_reliable_sort, iou_thres_sort
+from configs.yolact_config import yolact_weights, yolact_config, yolact_threshold, yolact_num_max_predictions
+from configs.optical_flow_config import lk_params, max_points_to_track, min_distance_points
 
 from utils.tracks_utils import get_unmatched_reliable_tracks, correct_the_tracks
 from utils.math_utils import get_degrees_from_the_x_axis, get_straight_line_from_2_points
@@ -56,33 +60,33 @@ if source == 0:
 optical_flow_debug_tracks_id = [1]
 
 # Yolov5 variables
-yolo_weights = r"C:\Users\angel\Desktop\Video Dimauro\Dataset Yolo\Results\train yolov5s ep700 imgsize416 sd1\results\content\yolov5\runs\train\yolov5s_results\weights\best.pt"
-yolo_img_size = 416
-yolo_conf_thres = 0.45
-yolo_iou_threshold = 0.3
+# yolo_weights = r"C:\Users\angel\Desktop\Video Dimauro\Dataset Yolo\Results\train yolov5s ep700 imgsize416 sd1\results\content\yolov5\runs\train\yolov5s_results\weights\best.pt"
+# yolo_img_size = 416
+# yolo_conf_thres = 0.45
+# yolo_iou_threshold = 0.3
 
 # SORT variables
-max_age_sort = 20  # Maximum number of frames to keep alive a track without associated detections
-min_hits_sort = 5  # Minimum number of associated detections before track is initialised
-max_num_frame_reliable_sort = 3  # Max confidence to keep valid a detection not matched
-iou_thres_sort = 0.00000000000000005
+# max_age_sort = 20  # Maximum number of frames to keep alive a track without associated detections
+# min_hits_sort = 5  # Minimum number of associated detections before track is initialised
+# max_num_frame_reliable_sort = 3  # Max confidence to keep valid a detection not matched
+# iou_thres_sort = 0.00000000000000005
 
-# Yolact variables
-yolact_weight = r"C:\Users\angel\Desktop\Video Dimauro\Dataset Yolact\Results\content\yolact\weights\yolact_resnet50_cilia_133_5614_interrupt.pth"
-yolact_model_path = SavePath.from_str(yolact_weight)
-yolact_config = yolact_model_path.model_name + '_config'
-yolact_threshold = 0
-yolact_num_max_predictions = 1
+# # Yolact variables
+# yolact_weight = r"C:\Users\angel\Desktop\Video Dimauro\Dataset Yolact\Results\content\yolact\weights\yolact_resnet50_cilia_133_5614_interrupt.pth"
+# yolact_model_path = SavePath.from_str(yolact_weight)
+# yolact_config = yolact_model_path.model_name + '_config'
+# yolact_threshold = 0
+# yolact_num_max_predictions = 1
 
 # Optical Flow variables
-lk_params = {'status': None,
-             'err': None,
-             'winSize': (30, 30),
-             'maxLevel': 2,
-             'criteria': (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03)
-             }
-max_points_to_track = 200
-min_distance_points = 10
+# lk_params = {'status': None,
+#              'err': None,
+#              'winSize': (30, 30),
+#              'maxLevel': 2,
+#              'criteria': (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03)
+#              }
+# max_points_to_track = 200
+# min_distance_points = 10
 
 # Create instance of SORT
 mot_tracker = Sort(max_age=max_age_sort, min_hits=min_hits_sort, iou_threshold=iou_thres_sort)
@@ -97,6 +101,7 @@ angle_movements_axis_to_x_axis = dict()
 cilia_movements = dict()
 avg_frames_period = dict()
 bpm = dict()
+
 # Create global variables for show debug windows
 if debug:
     currents_masks = dict()
@@ -123,7 +128,7 @@ with torch.no_grad():
         cudnn.fastest = True
         torch.set_default_tensor_type('torch.cuda.FloatTensor')
     yolact_model = Yolact()
-    yolact_model.load_weights(yolact_weight)
+    yolact_model.load_weights(yolact_weights)
     yolact_model.eval()
     if cuda:
         yolact_model = yolact_model.cuda()
@@ -151,9 +156,8 @@ with torch.no_grad():
 
     try:
         # Process each frame in video
-        for path, img, im0s, vid_cap in video:  # And print (tot_frame\current_frame) while call the __next__ method
+        for path, img, im0s, vid_cap in video:
             start_time = datetime.now()
-            t_yolact = None
             video_frame_count = video.count if isinstance(video, LoadWebcam) else video.frame
 
             img = torch.from_numpy(img).to(device)
@@ -333,7 +337,7 @@ with torch.no_grad():
                 else:
                     s = f'Frame {video.count}:'
                 s = s + f' time elaboration:{total_time.__format__(".4f")} s (yolo time:{t_yolo.__format__(".4f")} s'
-                if t_yolact is not None:
+                if t_yolact != 0:
                     s = s + f', yolact time:{t_yolact.__format__(".4f")} s'
                 s = s + ')'
                 print(s)
