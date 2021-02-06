@@ -33,6 +33,12 @@ from utils.save_results_utils import save_plts_results, save_video_output
 
 
 def remove_unmatched_vals(vals: list, dictionary: dict):
+    """
+    Return a dictionary with the only matched keys in the vals list
+    :param vals: list of the keys to keep in dictionary
+    :param dictionary: the dictionary to be cleaned
+    :return: a copy of the cleaned dictionary
+    """
     dict_to_return = dictionary.copy()
     for id_dict in dictionary:
         if id_dict not in vals:
@@ -41,6 +47,10 @@ def remove_unmatched_vals(vals: list, dictionary: dict):
 
 
 def parse_args():
+    """
+    Parsing the command line strings into Python objects
+    :return: a Namespace with the parsed variables
+    """
     parser = ArgumentParser(description="Calculates the average frequency of the beat of the cell's cilia",
                             formatter_class=MetavarTypeHelpFormatter)
 
@@ -72,57 +82,95 @@ def parse_args():
         opt_to_return.visualize = True
     return opt_to_return
 
-# TODO PASSARE PARAMETRI
-def show_debug_results():
+
+def show_debug_results_windows(actual_img, previous_img, yolo_detections_matched, yolo_names_list, sort_tracker,
+                               sort_matched_tracks, sort_unmatched_reliable_tracks, previous_tracks_showed,
+                               yolact_masks_dict, yolact_bbox_dict, angle_movements_axis_to_x_axis_dict,
+                               previous_p0_dict, currents_p0_dict, movements_to_show_dict,
+                               ids_to_debug: list, bbox_color, windows_proportion_vid: float):
+    """
+    Crated and show a windows with the detections matched using yolo and hers threshold; a windows with all the tracks
+    menaged from Sort; a windows with the matched and the reliable tracks which will be shown in output and a windows
+    (for each id in ids_to_debug) with the mask matched by yolact, the movements of the various point get by the
+    Optical Flow and the motion vector get by the sum of the movements (with his projection on the mouvement axis)
+    :param actual_img: actual frame
+    :param previous_img: previous frame
+    :param yolo_detections_matched: the yolo detections matched in format
+                                    [top_x, left_y, bottom_x, right_y, threshold, class_id]
+    :param yolo_names_list: a list with the yolo namespace
+    :param sort_tracker: Sort object with the managed tracks
+    :param sort_matched_tracks: the matched tracks between sort.update() and the yolo detections in format
+                                [top_x, left_y, bottom_x, right_y, id_track]
+    :param sort_unmatched_reliable_tracks: the reliable tracks find using the get_unmatched_reliable_tracks() method
+                                           in format [top_x, left_y, bottom_x, right_y, id_track]
+    :param previous_tracks_showed: the tracks showed in the previous frame in the format
+                                   [top_x, left_y, bottom_x, right_y, id_track]
+
+    :param yolact_masks_dict: a dictionary with the detected mask in format {id_track: mask}
+    :param yolact_bbox_dict: a dictionary with the detected  bbox mask
+                            in format {id_track: [top_x, left_y, bottom_x, right_y, id_track]}
+    :param angle_movements_axis_to_x_axis_dict: a dictionary with the id_track and the degrees of the movements axis
+                                                from the x axis in format {id_track: degrees}
+    :param previous_p0_dict: a dictionary contained the id_track and a list of the currents points matched using
+                            Optical Flow in format {id_track: [p0, ... pn]
+    :param currents_p0_dict: a dictionary contained the id_track and a list of the points matched using
+                            goodFeaturesToTrack in format {id_track: [p0, ... pn]
+    :param movements_to_show_dict: a dictionary contained the id_tracks and a movement vector
+                                in format {id_track: (x, y)}
+    :param ids_to_debug: a list contained the id_tracks of the tracks whose correctness you want to verify showing the
+                        calculated motion
+    :param bbox_color: a color RGB of the bbox to show in the windows
+    :param windows_proportion_vid: the proportion of the video in the windows using (H * prop, W * prop)
+    """
     # Stream yolo detections on im0_yolo
-    im0s_yolo = im0s.copy()
-    plot_yolo_detections(im0s_yolo, yolo_detections, names, color)
-    im0s_yolo = cv2.resize(im0s_yolo, (0, 0), fx=proportion_vid, fy=proportion_vid)
+    im0s_yolo = actual_img.copy()
+    plot_yolo_detections(im0s_yolo, yolo_detections_matched, yolo_names_list, bbox_color)
+    im0s_yolo = cv2.resize(im0s_yolo, (0, 0), fx=windows_proportion_vid, fy=windows_proportion_vid)
     cv2.imshow('Yolo detection', im0s_yolo)
 
     # Stream all tracks from SORT tracker on im0_all_tracks
-    im0s_all_tracks = im0s.copy()
-    plot_all_tracks(im0s_all_tracks, mot_tracker.trackers, color)
-    im0s_all_tracks = cv2.resize(im0s_all_tracks, (0, 0), fx=proportion_vid, fy=proportion_vid)
+    im0s_all_tracks = actual_img.copy()
+    plot_all_tracks(im0s_all_tracks, sort_tracker.trackers, bbox_color)
+    im0s_all_tracks = cv2.resize(im0s_all_tracks, (0, 0), fx=windows_proportion_vid, fy=windows_proportion_vid)
     cv2.imshow('All tracks', im0s_all_tracks)
 
     # Stream matched and reliable tracks on im0s_matched_and_reliable_tracks
-    im0s_matched_and_reliable_tracks = im0s.copy()
-    plot_matched_and_reliable_tracks(im0s_matched_and_reliable_tracks, matched_tracks, color,
-                                     unmatched_reliable_tracks, (0, 0, 0))
+    im0s_matched_and_reliable_tracks = actual_img.copy()
+    plot_matched_and_reliable_tracks(im0s_matched_and_reliable_tracks, sort_matched_tracks, bbox_color,
+                                     sort_unmatched_reliable_tracks, (0, 0, 0))
     im0s_matched_and_reliable_tracks = cv2.resize(im0s_matched_and_reliable_tracks, (0, 0),
-                                                  fx=proportion_vid,
-                                                  fy=proportion_vid)
+                                                  fx=windows_proportion_vid,
+                                                  fy=windows_proportion_vid)
     cv2.imshow('Matched and reliable tracks', im0s_matched_and_reliable_tracks)
 
+    all_tracks_to_show = vstack([sort_matched_tracks, sort_unmatched_reliable_tracks]).astype(int)
     # Stream Optical Flow movement on im0s_movement
-    for x1, y1, x2, y2, id_track in tracks_to_show:
-        if id_track in optical_flow_debug_tracks_id:
-            if id_track in previous_tracks[:, -1]:
-                # Create mask_roi
-                previous_roi = previous_frame.copy()[y1:y2, x1:x2]
-                mask_roi = create_mask_roi_img(previous_roi, currents_masks[id_track],
-                                               currents_bbox_masks[id_track],
-                                               angle_movements_axis_to_x_axis[id_track])
+    for x1, y1, x2, y2, id_track in all_tracks_to_show:
+        if id_track in ids_to_debug and id_track in previous_tracks_showed[:, -1]:
+            # Create mask_roi
+            previous_roi = previous_img.copy()[y1:y2, x1:x2]
+            mask_roi = create_mask_roi_img(previous_roi, yolact_masks_dict[id_track],
+                                           yolact_bbox_dict[id_track],
+                                           angle_movements_axis_to_x_axis_dict[id_track])
 
-                # Add movement point on im0s_roi_copy
-                im0s_roi_copy = im0s.copy()[y1:y2, x1:x2]
-                plot_movements_points(im0s_roi_copy, previous_p0[id_track], currents_p0[id_track])
+            # Add movement point on im0s_roi_copy
+            im0s_roi_copy = actual_img.copy()[y1:y2, x1:x2]
+            plot_movements_points(im0s_roi_copy, previous_p0_dict[id_track], currents_p0_dict[id_track])
 
-                # Create white_roi for movement results
-                white_roi = create_white_roi_movement_img(im0s_roi_copy.shape,
-                                                          movements_to_show[id_track],
-                                                          angle_movements_axis_to_x_axis[id_track])
+            # Create white_roi for movement results
+            white_roi = create_white_roi_movement_img(im0s_roi_copy.shape,
+                                                      movements_to_show_dict[id_track],
+                                                      angle_movements_axis_to_x_axis_dict[id_track])
 
-                # Concatenate mask_roi, im0s_roi_copy and white_roi to stream the results
-                im0s_movement = concatenate((mask_roi, im0s_roi_copy, white_roi), axis=1)
-                im0s_movement = cv2.resize(im0s_movement, (0, 0), fx=proportion_vid * 2,
-                                           fy=proportion_vid * 2)
-                cv2.imshow(f'Movement track n. {id_track}', im0s_movement)
+            # Concatenate mask_roi, im0s_roi_copy and white_roi to stream the results
+            im0s_movement = concatenate((mask_roi, im0s_roi_copy, white_roi), axis=1)
+            im0s_movement = cv2.resize(im0s_movement, (0, 0), fx=windows_proportion_vid * 2,
+                                       fy=windows_proportion_vid * 2)
+            cv2.imshow(f'Movement track n. {id_track}', im0s_movement)
 
     # Destroy dead windows 'Movement track n. {id_track}'
-    for id_track in setdiff1d(previous_tracks[:, -1], tracks_to_show[:, -1]):
-        if id_track in optical_flow_debug_tracks_id:
+    for id_track in setdiff1d(previous_tracks_showed[:, -1], all_tracks_to_show[:, -1]):
+        if id_track in ids_to_debug:
             cv2.destroyWindow(f'Movement track n. {id_track}')
 
 
@@ -338,7 +386,11 @@ if __name__ == '__main__':
 
                 # Stream debug results
                 if debug:
-                    show_debug_results()
+                    show_debug_results_windows(im0s, previous_frame, yolo_detections, names, mot_tracker,
+                                               matched_tracks, unmatched_reliable_tracks, previous_tracks,
+                                               currents_masks, currents_bbox_masks, angle_movements_axis_to_x_axis,
+                                               previous_p0, currents_p0, movements_to_show,
+                                               optical_flow_debug_tracks_id, color, proportion_vid)
 
                 # Print time elaboration
                 if debug or visualize is False:
@@ -444,4 +496,3 @@ if __name__ == '__main__':
                         print('Video saved successfully.')
                     except:
                         print('Unable to save processed video.')
-
