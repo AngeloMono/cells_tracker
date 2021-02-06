@@ -1,0 +1,24 @@
+# Install the latest Cuda version if you have a GPU
+# Install the correct torch=1.7 from the official site
+# Run the following command:
+# pip install -r requirements.txt
+
+# YOLO dependencies
+cython
+matplotlib>=3.2.2
+numpy>=1.18.5
+opencv-python>=4.1.2
+Pillow
+PyYAML>=5.3
+scipy>=1.4.1
+tensorboard>=2.2
+tqdm>=4.41.0
+seaborn
+pandas
+
+# SORT dependencies
+filterpy
+scikit-image
+
+# YOLACT dependencies
+pycocotools
