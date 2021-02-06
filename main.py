@@ -432,18 +432,18 @@ if __name__ == '__main__':
                 previous_p0 = currents_p0.copy()
                 previous_tracks = tracks_to_show.copy()
 
+                # Write output on im0s_to_show
+                for x1, y1, x2, y2, id_track in tracks_to_show:
+                    label = f'{names[0]} {int(id_track)}'
+                    if bpm.__contains__(id_track):
+                        label = label + f' - {bpm[id_track]} bpm'
+                    plot_one_box((x1, y1, x2, y2), im0s_to_show, label=label, color=color, line_thickness=3)
+
                 # Append frame to save in img_video_output
                 if save_output:
                     img_video_output.append(im0s_to_show)
 
                 if visualize or debug:
-                    # Write output on im0s_to_show
-                    for x1, y1, x2, y2, id_track in tracks_to_show:
-                        label = f'{names[0]} {int(id_track)}'
-                        if bpm.__contains__(id_track):
-                            label = label + f' - {bpm[id_track]} bpm'
-                        plot_one_box((x1, y1, x2, y2), im0s_to_show, label=label, color=color, line_thickness=3)
-
                     # Stream out-put results img
                     im0s_to_show = cv2.resize(im0s_to_show, (0, 0), fx=proportion_vid, fy=proportion_vid)
                     cv2.imshow(fr'{path}', im0s_to_show)
