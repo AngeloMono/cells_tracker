@@ -8,7 +8,10 @@ This project requires **Python 3.8** version, it does not ensure correct works w
 Step installations:
 - Download the project on yours device
     ```bash
-    git clone --recurse-submodules https://github.com/AngeloMono/cells_tracker.git
+    git clone https://github.com/AngeloMono/cells_tracker.git
+    cd cells_tracker/
+    git submodule init
+    git submodule update
     ```
 - Make as a python root the directories: `yolov5`, `yolact` and `sort`
 - Install the latest `Cuda` version if your device has a GPU
