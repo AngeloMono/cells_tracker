@@ -350,22 +350,26 @@ if __name__ == '__main__':
                                 if angle is not None:
                                     angle_movements_axis_to_x_axis[id_track] = 360 - angle  # in [90,0] U ]270,360[
 
-                        # Sum of  movements
-                        mov = {'y': 0,
-                               'x': 0,
-                               'degrees_to_x': 0,
-                               'module': 0
-                               }
-                        for i, (start, end) in enumerate(zip(previous_p0[id_track], currents_p0[id_track])):
-                            x_start, y_start = start.ravel()
-                            x_end, y_end = end.ravel()
-                            mov['x'] = mov['x'] + (x_end - x_start)
-                            mov['y'] = mov['y'] + (y_start - y_end)
-                        mov['module'] = sqrt(mov['x'] ** 2 + mov['y'] ** 2)
-                        mov['degrees_to_x'] = get_degrees_from_the_x_axis(mov['x'], mov['y'])
+                        mov = None
+                        previous_p0_exist = previous_p0.__contains__(id_track) and previous_p0[id_track] is not None
+                        currents_p0_exist = currents_p0.__contains__(id_track) and currents_p0[id_track] is not None
+                        if previous_p0_exist and currents_p0_exist:
+                            # Sum of  movements
+                            mov = {'y': 0,
+                                   'x': 0,
+                                   'degrees_to_x': 0,
+                                   'module': 0
+                                   }
+                            for i, (start, end) in enumerate(zip(previous_p0[id_track], currents_p0[id_track])):
+                                x_start, y_start = start.ravel()
+                                x_end, y_end = end.ravel()
+                                mov['x'] = mov['x'] + (x_end - x_start)
+                                mov['y'] = mov['y'] + (y_start - y_end)
+                            mov['module'] = sqrt(mov['x'] ** 2 + mov['y'] ** 2)
+                            mov['degrees_to_x'] = get_degrees_from_the_x_axis(mov['x'], mov['y'])
 
                         # Save movement value in cilia_movements[id_track][frame]
-                        if mov['degrees_to_x'] is not None and angle_movements_axis_to_x_axis.__contains__(id_track):
+                        if mov is not None and angle_movements_axis_to_x_axis.__contains__(id_track):
                             if cilia_movements.__contains__(id_track) is False:
                                 cilia_movements[id_track] = {}
                             m = mov['module'] * cos(

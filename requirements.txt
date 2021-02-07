@@ -1,4 +1,4 @@
-# Install the latest Cuda version if you have a GPU
+# Install the latest Cuda version if your device has a GPU
 # Install the correct torch=1.7 from the official site
 # Run the following command:
 # pip install -r requirements.txt
