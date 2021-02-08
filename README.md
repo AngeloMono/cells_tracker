@@ -1,12 +1,12 @@
 # Cells tracker
 
-Cells tarckers is a Python project to calculate the cilia beat of cilied cells.
+Cells trackers is a Python project to calculate the cilia beat of cilied cells.
 
 ## Installation
 This project requires **Python 3.8** version, it does not ensure correct works with later versions.
 
 Step installations:
-- Download the project on yours device
+- Download the project on your device
     ```bash
     git clone https://github.com/AngeloMono/cells_tracker.git
     cd cells_tracker/
@@ -68,7 +68,7 @@ In particular it shows:
 
 
 
-In debug mode is possible play or stop the video elaboration by the press of the space bar or 
+In debug mode is possible to play or stop the video elaboration by the press of the space bar or 
 go to the next frame by pressing any key
 
 ## Create custom weights
@@ -85,7 +85,7 @@ Pull requests are welcome. For major changes, please open an issue first to disc
 
 
 ## Citations
-This project use the following github project:
+This project uses the following github project:
 * [Yolov5](https://github.com/ultralytics/yolov5):
     citation page  at the following [link](https://zenodo.org/record/4418161)
 * [SORT](https://github.com/abewley/sort)
