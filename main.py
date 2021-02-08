@@ -246,7 +246,7 @@ if __name__ == '__main__':
             print('\nDEBUG MODE ACTIVATE:')
             print("Press 'space bar' to play or stop the video")
             print('Press any other key to go to the next frame')
-        else:
+        elif visualize:
             print("Press 'esc' to close visualize mode")
         print()
 
