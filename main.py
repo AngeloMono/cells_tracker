@@ -369,7 +369,7 @@ if __name__ == '__main__':
                             mov['degrees_to_x'] = get_degrees_from_the_x_axis(mov['x'], mov['y'])
 
                         # Save movement value in cilia_movements[id_track][frame]
-                        if mov is not None and angle_movements_axis_to_x_axis.__contains__(id_track):
+                        if mov is not None and mov['degrees_to_x'] is not None and angle_movements_axis_to_x_axis.__contains__(id_track):
                             if cilia_movements.__contains__(id_track) is False:
                                 cilia_movements[id_track] = {}
                             m = mov['module'] * cos(
