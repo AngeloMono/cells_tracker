@@ -1,6 +1,6 @@
 from os import path
 from os.path import join, splitext
-from matplotlib.pyplot import plot, savefig, axes, suptitle, clf
+from matplotlib.pyplot import plot, savefig, axes, suptitle, clf, legend
 from cv2 import VideoWriter, VideoWriter_fourcc
 from numpy import zeros
 
@@ -19,6 +19,8 @@ def save_plt_result(results_path, movements_dict: dict, id_track, bpm: float = N
     all_values = []
     unmatched_frames = []
     axes().spines['bottom'].set_position(('data', 0))
+    axes().set_xlabel('n. frame', loc='right')
+    axes().set_ylabel('movement')
     for id_key in range(min(frames), max(frames)+1):
         all_frames.append(id_key)
         if movements_dict.__contains__(id_key) is False:
@@ -30,8 +32,9 @@ def save_plt_result(results_path, movements_dict: dict, id_track, bpm: float = N
     if bpm is not None:
         subtitle = subtitle + f' - {bpm} bpm'
     suptitle(subtitle)
-    plot(frames, values, 'o')
-    plot(unmatched_frames, zeros(len(unmatched_frames)), 'o', c='red')
+    plot(frames, values, 'o', label='matched')
+    plot(unmatched_frames, zeros(len(unmatched_frames)), 'o', c='red', label='unmatched')
+    legend(["matched", "unmatched"])
     plot(all_frames, all_values)
     plt_path = path.join(results_path, f'Movement cellula n. {id_track}.png')
     savefig(plt_path)
