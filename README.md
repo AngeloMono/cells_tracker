@@ -39,8 +39,8 @@ containing a `video.mp4` and , for each cell matched in the video source,
 a plot representing the movement made by the cell's cilia during the video 
 (where no movement has been calculated, the points inside the plot are showing in red).
 <p align="center">
-    <a href="https://drive.google.com/file/d/1HSI9Y9SegpRu0NR8n5VO_5RIIwE3RblL">
-        <img src="https://drive.google.com/file/d/1HSI9Y9SegpRu0NR8n5VO_5RIIwE3RblL" style="width: 650px; max-width: 100%; height: auto" title="Movement plot" />
+    <a href="https://drive.google.com/uc?export=view&id=1HSI9Y9SegpRu0NR8n5VO_5RIIwE3RblL">
+        <img src="https://drive.google.com/uc?export=view&id=1HSI9Y9SegpRu0NR8n5VO_5RIIwE3RblL" style="width: 650px; max-width: 100%; height: auto" title="Movement plot" />
     </a>
 </p>
 
