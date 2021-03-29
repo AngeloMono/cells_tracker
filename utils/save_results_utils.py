@@ -7,7 +7,7 @@ from numpy import zeros
 
 def save_plt_result(results_path, movements_dict: dict, id_track, bpm: float = None):
     """
-    Save the plot of the movements_movements_dict in the results_path
+    Save the plot of the movements_dict in the results_path
     :param results_path: path where to save the result
     :param movements_dict: dictionary contains the movement for each frame as {id_frame: movement}
     :param id_track: id_track to write in the subtitle
@@ -43,7 +43,7 @@ def save_plt_result(results_path, movements_dict: dict, id_track, bpm: float = N
 
 def save_plts_results(results_path, movement_dict, bpm_dict):
     """
-    Save the plot of the movements_movements_dict in the results_path for each tracks in movement_dict
+    Save the plot of the movements_dict in the results_path for each tracks in movement_dict
     :param results_path: path where to save the result
     :param movement_dict: dictionary containing the movements as {id_track: {id_frame: mov ...}}
     :param bpm_dict: dictionary containing the bpm as {id_track: bpm}
